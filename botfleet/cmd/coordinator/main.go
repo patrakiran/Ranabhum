@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -44,6 +45,17 @@ func main() {
 	}
 	log.Printf("[coordinator] connected to redis=%s kafka=%v", redisAddr, brokers)
 	log.Printf("[coordinator] config: bots=%d rate=%d/s duration=%s", botCount, ratePerBot, runDuration)
+
+	// Create global HTTP client for bots to share connections
+	botTransport := &http.Transport{
+		MaxIdleConns:        5000,
+		MaxIdleConnsPerHost: 5000,
+		IdleConnTimeout:     30 * time.Second,
+	}
+	botClient := &http.Client{
+		Transport: botTransport,
+		Timeout:   5 * time.Second,
+	}
 
 	// Handler called when a new submission arrives.
 	handler := func(ctx context.Context, event bot.SubmissionReady) error {
@@ -94,7 +106,10 @@ func main() {
 					Duration:     runDuration,
 					RatePerSec:   ratePerBot,
 				}
-				err := bot.Run(ctx, cfg, func(m bot.BotMetrics) {
+				// err := bot.Run(ctx, cfg, func(m bot.BotMetrics) {
+				// 	pub.Publish(ctx, m) // fire-and-forget
+				// })
+				err := bot.Run(ctx, cfg, botClient, func(m bot.BotMetrics) {
 					pub.Publish(ctx, m) // fire-and-forget
 				})
 				if err != nil && ctx.Err() == nil {
@@ -114,10 +129,17 @@ func main() {
 		url := fmt.Sprintf("%s/submissions/%s", sandboxEngineURL, event.SubmissionID)
 		log.Printf("[coordinator] run_id=%s cleaning up container for submission_id=%s via %s", runID, event.SubmissionID, url)
 
-		req, err := http.NewRequest("DELETE", url, nil)
+		// req, err := http.NewRequest("DELETE", url, nil)
+		// if err == nil {
+		// 	resp, err := http.DefaultClient.Do(req)
+		// 	if err == nil {
+		// 		resp.Body.Close()
+		req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
 		if err == nil {
-			resp, err := http.DefaultClient.Do(req)
+			cleanupClient := &http.Client{Timeout: 5 * time.Second}
+			resp, err := cleanupClient.Do(req)
 			if err == nil {
+				io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
 				log.Printf("[coordinator] run_id=%s container cleanup request sent successfully", runID)
 			} else {
@@ -169,7 +191,11 @@ func runCertification(ctx context.Context, targetURL string, gapMs int, passes i
 			payload, _ := json.Marshal(order)
 			req, _ := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/order", targetURL), bytes.NewReader(payload))
 			req.Header.Set("Content-Type", "application/json")
+			// if resp, err := client.Do(req); err == nil {
+			// 	resp.Body.Close()
+			// }
 			if resp, err := client.Do(req); err == nil {
+				io.Copy(io.Discard, resp.Body) // FIX: Drain body to reuse TCP connection
 				resp.Body.Close()
 			}
 			time.Sleep(time.Duration(gapMs) * time.Millisecond)
@@ -201,6 +227,7 @@ func runCertification(ctx context.Context, targetURL string, gapMs int, passes i
 					}
 				}
 			}
+			io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
 		}
 

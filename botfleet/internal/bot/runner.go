@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"time"
@@ -34,17 +35,17 @@ type MetricsCallback func(m BotMetrics)
 // It fires orders at RatePerSec orders/second by using a ticker.
 // Each order is fired in a separate goroutine (go fireOrder) so they don't
 // block each other — this is how we achieve high concurrency.
-func Run(ctx context.Context, cfg Config, onMetric MetricsCallback) error {
-	transport := &http.Transport{
-		MaxIdleConns:        5000,
-		MaxIdleConnsPerHost: 5000,
-		IdleConnTimeout:     30 * time.Second,
-	}
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   5 * time.Second,
-	}
-
+// func Run(ctx context.Context, cfg Config, onMetric MetricsCallback) error {
+// 	transport := &http.Transport{
+// 		MaxIdleConns:        5000,
+// 		MaxIdleConnsPerHost: 5000,
+// 		IdleConnTimeout:     30 * time.Second,
+// 	}
+// 	client := &http.Client{
+// 		Transport: transport,
+// 		Timeout:   5 * time.Second,
+// 	}
+func Run(ctx context.Context, cfg Config, client *http.Client, onMetric MetricsCallback) error {
 	// Ticker fires once every (1/RatePerSec) seconds
 	ticker := time.NewTicker(time.Second / time.Duration(cfg.RatePerSec))
 	defer ticker.Stop()
@@ -152,6 +153,8 @@ func fireOrder(ctx context.Context, client *http.Client, cfg Config, onMetric Me
 				fillCorrect = 0
 			}
 		}
+		// DRAIN THE BODY TO REUSE TCP CONNECTION!
+		io.Copy(io.Discard, resp.Body)
 	}
 
 	// report the full result back to the coordinator via the callback

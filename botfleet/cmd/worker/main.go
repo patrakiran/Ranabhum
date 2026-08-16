@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os/signal"
 	"syscall"
 	"time"
@@ -42,7 +43,17 @@ func main() {
 	log.Printf("[worker] starting bot_id=%s run_id=%s target=%s rate=%d/s duration=%s",
 		botID, runID, targetURL, ratePerSec, duration)
 
-	err := botrunner.Run(ctx, cfg, func(m bot.BotMetrics) {
+	botTransport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     30 * time.Second,
+	}
+	botClient := &http.Client{
+		Transport: botTransport,
+		Timeout:   5 * time.Second,
+	}
+
+	err := botrunner.Run(ctx, cfg, botClient, func(m bot.BotMetrics) {
 		pub.Publish(ctx, m)
 	})
 	if err != nil && ctx.Err() == nil {
