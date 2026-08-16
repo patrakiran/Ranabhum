@@ -82,6 +82,9 @@ To solve the "Observer Effect" in distributed systems (where concurrent load gen
 ### 3.7 Strict Sequential Test Queuing & Cooldowns
 To prevent CPU thermal-throttling and infrastructure congestion (which can artificially degrade contestant performance), the `botfleet` coordinator implements strict synchronous queuing. It blocks the Kafka consumer loop until a full 60-second stress test completes. Afterward, a mandatory **30-second cooldown gap** is enforced to allow the Redpanda and TimescaleDB telemetry pipelines to fully drain their backlogs before the next queued submission is processed.
 
+### 3.8 Bot Fleet Connection Pooling & TCP Reuse
+To prevent port exhaustion and reduce latency overhead during stress tests, the Bot Fleet utilizes a global `http.Client` pool per worker/coordinator node (`MaxIdleConnsPerHost: 5000`). Crucially, bots are programmed to explicitly drain and discard the HTTP response body (`io.Copy(io.Discard, resp.Body)`) for every fired order, which guarantees the `net/http` transport can safely return the underlying TCP connection to the idle pool for immediate reuse.
+
 ---
 
 ## 4. Security Model
