@@ -16,18 +16,21 @@ async def compute_scores(submission_id: str, run_id: str, db_pool=None, redis_cl
     try:
         # single query combines all stats
         result = await conn.fetchrow("""
-            SELECT 
+            SELECT
                 percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ns) / 1e6 AS p50_ms,
                 percentile_cont(0.90) WITHIN GROUP (ORDER BY latency_ns) / 1e6 AS p90_ms,
                 percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ns) / 1e6 AS p99_ms,
+
+                COUNT(*) AS row_count,
                 COUNT(*) / GREATEST(
-                    EXTRACT(EPOCH FROM (MAX(sent_at) - MIN(sent_at))), 1
+                    EXTRACT(EPOCH FROM (MAX(sent_at) - MIN(sent_at))), 0.001
                 ) AS tps,
                 AVG(fill_correct::int) AS correctness
             FROM order_metrics
             WHERE submission_id = $1 AND run_id = $2
         """, submission_id, run_id)
 
+        row_count = int(result["row_count"] or 0)
         p50 = float(result["p50_ms"] or 0)
         p90 = float(result["p90_ms"] or 0)
         p99 = float(result["p99_ms"] or 1)
@@ -42,7 +45,22 @@ async def compute_scores(submission_id: str, run_id: str, db_pool=None, redis_cl
                 run_state = json.loads(run_data)
                 cert_score = float(run_state.get("certification_score", -1.0))
                 team_name = run_state.get("contestant_id", "Unknown")
-        
+
+
+        if row_count == 0:
+            return {
+                "submission_id": submission_id,
+                "run_id": run_id,
+                "team_name": team_name,
+                "p50_ms": 0.0,
+                "p90_ms": 0.0,
+                "p99_ms": 0.0,
+                "tps": 0.0,
+                "correctness": 0.0,
+                "cert_score": round(cert_score, 2),
+                "score": 0.0,
+            }
+
         # 1. Normalize TPS (e.g. 10,000 TPS -> 100 points)
         normalized_tps = tps_val / 100.0
         
