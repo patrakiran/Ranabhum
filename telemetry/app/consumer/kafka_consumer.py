@@ -35,7 +35,7 @@ async def flush_batch(db_pool, run_id):
         # Acquire a connection from the pool for concurrent execution
         async with db_pool.acquire() as conn:
             await conn.executemany("""
-                INSERT INTO order_metrics 
+                INSERT INTO order_metrics
                 (submission_id, run_id, order_id, bot_id, cancel_order_id, order_type, side,
                  price, quantity, sent_at, ack_at_ns, latency_ns, expected_fill_qty,
                  actual_fill_qty, expected_fill_price, actual_fill_price, fill_correct,
@@ -43,6 +43,7 @@ async def flush_batch(db_pool, run_id):
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
                         to_timestamp($10::double precision / 1e9), $11, $12, $13,
                         $14, $15, $16, $17, $18, $19)
+                ON CONFLICT (run_id, order_id, sent_at) DO NOTHING
             """, to_insert)
 
     # Shield the database insert from task cancellation to prevent connection issues or data loss
@@ -79,7 +80,7 @@ async def score_after_delay(sub_id, run_id, db_pool, redis_client, delay=5):
     except Exception as e:
         print(f"⚠️ Could not broadcast: {e}")
     
-    # cleanup
+    # cleanup and memory leak 
     run_last_seen.pop(run_id, None)
     run_score_tasks.pop(run_id, None)
 
